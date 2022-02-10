@@ -20,3 +20,12 @@ class Patent:
         self.registration_date = registration_date
         # патентообладатели
         self.patent_holders = patent_holders
+
+    def to_list(self):
+        return [self.patent_name,
+                self.full_name_of_authors,
+                self.patent_type,
+                self.patent_number,
+                self.request_number,
+                self.registration_date,
+                self.patent_holders]

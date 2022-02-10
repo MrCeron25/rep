@@ -8,9 +8,11 @@ class Config:
     # браузер во весь экран
     maximize_window = True
     # кол-во статей
-    number_of_articles = 200
+    number_of_articles = 0
     # кол-во патентов
-    number_of_patents = 0
+    number_of_patents = 3
     # reCapcha
     path_to_mp3 = fr'C:\Users\ARTEM\Desktop\proj\sample.mp3'
     path_to_wav = fr'C:\Users\ARTEM\Desktop\proj\sample.wav'
+    #
+    path_to_save = fr'C:\Users\ARTEM\Desktop\proj'

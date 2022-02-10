@@ -15,6 +15,7 @@ from article import Article
 from patent import Patent
 from parsers import Parser
 from bs4 import BeautifulSoup
+import json
 # =================
 import os
 import sys
@@ -28,7 +29,6 @@ import random
 import time
 from datetime import datetime
 import requests
-import json
 import stem.process
 from stem import Signal
 from stem.control import Controller
@@ -58,6 +58,10 @@ class ParserElibrary(Parser):
         self.driver = Service(Config.path_to_chrome_driver)
         self.browser = Chrome(service=self.driver)
         self.wait = WebDriverWait(self.browser, Config.waiting_time)
+        self.articles = []
+        self.patents = []
+        self.article_links = deque()
+        self.patent_links = deque()
         if Config.maximize_window:
             self.browser.maximize_window()
 
@@ -120,6 +124,7 @@ class ParserElibrary(Parser):
             recaptcha_control_frame = None
             recaptcha_challenge_frame = None
             for index, frame in enumerate(frames):
+                # print(frame.get_attribute("title"))
                 if re.search('reCAPTCHA', frame.get_attribute("title")):
                     recaptcha_control_frame = frame
 
@@ -222,57 +227,23 @@ class ParserElibrary(Parser):
             pass
         return res
 
-    def run(self):
-        article_links = deque()
-        patent_links = deque()
+    def is_name(self, data):
+        if data.previous.find('РЕДАКТОРЫ:'):
+            return True
+        else:
+            return False
 
-        # browser.get(Config.url)
-        assert self.load_page_with_waiting(Config.url)
-
-        while Config.number_of_patents > len(patent_links) or Config.number_of_articles > len(article_links):
-            # try:
-            #     self.wait.until(EC.presence_of_element_located((By.XPATH, '/html/body')))
-            #     # print("Page is ready!")
-            # except TimeoutException:
-            #     print("Loading took too much time!")
-
-            table_with_data = \
-                self.browser.find_element(By.XPATH, '//*[@id="restab"]').find_element(By.TAG_NAME, 'tbody')
-            rows_data = table_with_data.find_elements(By.TAG_NAME, 'tr')
-
-            idx = 3
-            while idx < len(rows_data) and (
-                    Config.number_of_patents > len(patent_links) or Config.number_of_articles > len(article_links)):
-                # print(rows_data[idx].get_attribute('id'))
-                header = rows_data[idx].find_element(By.TAG_NAME, 'a')
-                # print(tag_a.text)
-                link = header.get_attribute('href')
-                if link.startswith('http://') or link.startswith('https://'):
-                    # print(link)
-
-                    fonts = rows_data[idx].find_elements(By.XPATH, './td[2]/font')
-                    if len(fonts) > 1 and fonts[1] and 'Патент'.upper() in fonts[1].text.upper():
-                        # патен
-                        if Config.number_of_patents > len(patent_links):
-                            patent_links.append(link)
-                    else:
-                        # статья
-                        if Config.number_of_articles > len(article_links):
-                            article_links.append(link)
-                    idx += 1
-            self.browser.find_element(By.XPATH, '//*[@id="pages"]/table/tbody/tr/td[13]/a').click()
-
-        articles = deque()
-
-        print(f'{len(patent_links)=}\n{len(article_links)=}')
-
-        while article_links:
-            url_page = article_links.popleft()
+    def save_articles(self):
+        while self.article_links:
+            url_page = self.article_links.popleft()
             assert self.load_page_with_waiting(url_page)
             # self.browser.get(url_page)
             # print(browser.page_source)
-            # soup = BeautifulSoup(browser.page_source.upper(), 'html.parser')
+            html_page = self.browser.page_source.upper()
+            soup = BeautifulSoup(html_page, 'lxml')
+            # print(soup.get_text)
 
+            # reCapcha
             # try:
             #     self.browser.find_element(By.CLASS_NAME, 'midtext')
             #     self.wait.until(
@@ -296,25 +267,150 @@ class ParserElibrary(Parser):
                                                                 'table/tbody/tr[2]/td[1]/table[2]/tbody/tr/td[2]/span/b/p')
 
             full_name_of_authors = []
-
-            # # try:
-            # #     table_names = browser.find_element(By.XPATH, '/html/body/table/tbody/tr/td/table[1]/tbody/tr/td[2]/'
-            # #                                                  'table/tbody/tr[2]/td[1]/div/table[1]/tbody/tr/td[2]')
-            # #     d = table_names.find_elements(By.TAG_NAME, 'b')
-            # #     for i in d:
-            # #         full_name_of_authors.append(i.text)
-            # # except NoSuchElementException:
-            # #     print(idx, 'NoSuchElementException')
-
             isbn = None
 
-            articles.append(Article(article_title.text, full_name_of_authors, isbn))
-            # idx += 1
+            data = soup.find_all('div', style='DISPLAY: INLINE-BLOCK; WHITE-SPACE: NOWRAP')
+            data = list(filter(self.is_name, data))
+            for i in data:
+                name = i.find('font', color="#00008F")
+                full_name_of_authors.append(name.text.replace('&NBSP;', ''))
 
-        # while articles:
-        #     print(articles.popleft(), '\n')
+            # isbn
+            try:
+                idx_isbn = html_page.index('ISBN'.upper())
+                isbn = html_page[idx_isbn + 33:idx_isbn + 33 + 17]
+                # print(html_page[idx_isbn + 33:idx_isbn + 33 + 17])
+            except ValueError:
+                pass
+            # issn
+            # if :
+            self.articles.append(Article(article_title.text, full_name_of_authors, isbn))
+
+    def save_patents(self):
+        while self.patent_links:
+            url_page = self.patent_links.popleft()
+            assert self.load_page_with_waiting(url_page)
+
+            html_page = self.browser.page_source.upper()
+            soup = BeautifulSoup(html_page, 'lxml')
+
+            patent_name = self.browser.find_element(By.XPATH, '/html/body/table/tbody/tr/td/table[1]/tbody/tr/td[2]/'
+                                                              'table/tbody/tr[2]/td[1]/table[2]/tbody/tr/td[2]/span/b/p')
+
+            full_name_of_authors = []
+
+            data = soup.find_all('div', style='DISPLAY: INLINE-BLOCK; WHITE-SPACE: NOWRAP')
+            data = list(filter(self.is_name, data))
+            for i in data:
+                name = i.find('font', color="#00008F")
+                full_name_of_authors.append(name.text.replace('&NBSP;', ''))
+
+            # тип патента
+            patent_type = None
+            try:
+                idx_patent_type = html_page.index('Тип:'.upper())
+                # print('html_page[idx_patent_type:idx_patent_type + 124]')
+                patent_type = findall(fr'>(.+)</', html_page[idx_patent_type:idx_patent_type + 256])[0]
+                print(f'{patent_type=}\n')
+            except ValueError:
+                pass
+            except IndexError:
+                pass
+
+            #  номер патента
+            patent_number = None
+            try:
+                idx_patent_number = html_page.index('Номер патента:'.upper())
+                patent_number = html_page[idx_patent_number + 42:idx_patent_number + 42 + 23].replace('&NBSP;', ' ')
+                print(f'{patent_number=}\n')
+            except ValueError:
+                pass
+
+            # номер заявки
+            request_number = None
+            try:
+                idx_request_number = html_page.index('Номер&nbsp;заявки:'.upper())
+                request_number = findall(fr'>(\d+)</FONT',
+                                         html_page[idx_request_number:
+                                                   idx_request_number + 256].replace('&NBSP;', ' '))[0]
+                print(f'{request_number=}\n')
+            except ValueError:
+                pass
+            except IndexError:
+                pass
+
+            # дата регистрации
+            registration_date = None
+            try:
+                idx_registration_date = html_page.index('Дата&nbsp;регистрации:'.upper())
+                registration_date = findall(fr'>(.{10})</FONT',
+                                         html_page[idx_registration_date:
+                                                   idx_registration_date + 256].replace('&NBSP;', ' '))[0]
+                print(f'{registration_date=}\n')
+            except ValueError:
+                pass
+            except IndexError:
+                pass
+
+            # патентообладатели
+            # # self.patent_holders = patent_holders
+            patent_holders = None
+            # try:
+            #     idx_patent_holders = html_page.index('Дата публикации:'.upper())
+            #     request_number = html_page[idx_patent_holders + 42:idx_patent_holders + 42 + 23].replace('&NBSP;', ' ')
+            #     print(f'{patent_number=}\n')
+            # except ValueError:
+            #     pass
+
+            self.patents.append(Patent(patent_name.text,
+                                       full_name_of_authors,
+                                       patent_type,
+                                       patent_number,
+                                       request_number,
+                                       registration_date,
+                                       patent_holders))
+
+    def run(self):
+        # browser.get(Config.url)
+        assert self.load_page_with_waiting(Config.url)
+
+        while Config.number_of_patents > len(self.patent_links) or Config.number_of_articles > len(self.article_links):
+
+            table_with_data = \
+                self.browser.find_element(By.XPATH, '//*[@id="restab"]').find_element(By.TAG_NAME, 'tbody')
+            rows_data = table_with_data.find_elements(By.TAG_NAME, 'tr')
+
+            idx = 3
+            while idx < len(rows_data) and \
+                    (Config.number_of_patents > len(self.patent_links) or
+                     Config.number_of_articles > len(self.article_links)):
+                # print(rows_data[idx].get_attribute('id'))
+                header = rows_data[idx].find_element(By.TAG_NAME, 'a')
+                # print(tag_a.text)
+                link = header.get_attribute('href')
+                if link.startswith('http://') or link.startswith('https://'):
+                    # print(link)
+
+                    fonts = rows_data[idx].find_elements(By.XPATH, './td[2]/font')
+                    if len(fonts) > 1 and fonts[1] and 'Патент'.upper() in fonts[1].text.upper():
+                        # патен
+                        if Config.number_of_patents > len(self.patent_links):
+                            self.patent_links.append(link)
+                    else:
+                        # статья
+                        if Config.number_of_articles > len(self.article_links):
+                            self.article_links.append(link)
+                    idx += 1
+            self.browser.find_element(By.XPATH, '//*[@id="pages"]/table/tbody/tr/td[13]/a').click()
+
+        # print(f'{len(self.patent_links)=}\n{len(self.article_links)=}')
+
+        self.save_articles()
+
+        self.save_patents()
 
         self.browser.quit()
+        self.save_to_csv()
 
         # class='recaptcha-checkbox-border'
         # '/html/body/div[1]/form/input[2]'
@@ -328,7 +424,16 @@ class ParserElibrary(Parser):
         # @	        Выбирает атрибуты
 
     def save_to_csv(self):
-        pass
+        def save_to_csv_articles():
+            with open(Config.path_to_save + fr'\articles.csv', 'w', encoding='UTF8', newline='') as f:
+                json.dump([i.to_list() for i in self.articles], f, ensure_ascii=False, indent=2)
+
+        def save_to_csv_patents():
+            with open(Config.path_to_save + fr'\patents.csv', 'w', encoding='UTF8', newline='') as f:
+                json.dump([i.to_list() for i in self.patents], f, ensure_ascii=False, indent=2)
+
+        save_to_csv_articles()
+        save_to_csv_patents()
 
     def save_to_xls(self):
         pass
